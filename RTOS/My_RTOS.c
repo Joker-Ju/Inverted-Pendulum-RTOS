@@ -73,8 +73,8 @@ PID_TypeDef AnglePID = {
 	.Ki = 0,
 	.Kd = 0.3,
     .Target = MiddleAngle,
-    .OutMax = 10.0f,
-    .OutMin = -10.0f,
+    .OutMax = 100.0f,
+    .OutMin = -100.0f,
 	.Alpha = 0.5,
 };
 
