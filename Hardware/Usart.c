@@ -1,9 +1,37 @@
 #include "stm32f10x.h"
 #include <stdio.h>
 
-uint8_t buffer[100] = {0};
-uint8_t size = 0;
-uint8_t Usart1Over = 0; //接收完成标志位
+static uint8_t buffer[100] = {0};
+static uint8_t size = 0;
+static uint8_t Usart1Over = 0; //接收完成标志位
+// ── 新增4个接口函数 ──
+uint8_t Usart_IsDataReady(void) {
+    return Usart1Over;
+}
+
+uint8_t* Usart_GetData(void) {
+    return buffer;
+}
+
+uint8_t Usart_GetSize(void) {
+    return size;
+}
+
+void Usart_ClearFlag(void) {
+    Usart1Over = 0;
+}
+void Usart_ClearSize(void){
+	size = 0;
+}
+
+uint8_t Usart_MatchCmd(const uint8_t *cmd, uint8_t len)
+{
+    if (size != len) return 0;
+    for (uint8_t i = 0; i < len; i++) {
+        if (buffer[i] != cmd[i]) return 0;
+    }
+    return 1;
+}
 
 void Usart_Init(void)
 {
@@ -99,8 +127,9 @@ void USART1_IRQHandler(void)
 {
    if (USART1->SR & USART_SR_RXNE) //检查接收中断标志位
    {
-        buffer[size++] = USART1->DR; //读取接收到的数据并存储在buffer中，size为接收到的字符串长度
-
+	   if (size < 100){
+			buffer[size++] = USART1->DR; //读取接收到的数据并存储在buffer中，size为接收到的字符串长度
+	   }
    }
    else if (USART1->SR & USART_SR_IDLE) //检查空闲线检测标志位
    {

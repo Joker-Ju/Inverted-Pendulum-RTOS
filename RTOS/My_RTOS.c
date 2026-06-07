@@ -3,6 +3,7 @@
 #include "sched.h"
 #include "event_groups.h"
 #include "timers.h"
+#include "semaphore.h"
 
 //#include Hardware
 #include "Usart.h"
@@ -50,6 +51,11 @@ uint32_t Display_Task_Stack[Display_Task_Stack_Size + TASK_GUARD_SIZE];
 TCB_t  TimerDaemon_Task_Handler;
 uint32_t TimerDaemon_Task_Stack[TimerDaemon_Task_Stack_Size + TASK_GUARD_SIZE];
 
+#define Upgrade_Task_Stack_Size 50
+#define Upgrade_Task_PRIORITY 0
+#define Upgrade_Task_PREEMPT_PRIORITY 4
+TCB_t  Upgrade_Task_Handler;
+uint32_t Upgrade_Task_Stack[Upgrade_Task_Stack_Size + TASK_GUARD_SIZE];
 
 #define Start_Task_Stack_Size 50
 #define Start_Task_PRIORITY 0
@@ -240,7 +246,41 @@ void TimerDaemon_Task(void *param)
     }
 }
 
+#define APP_A_ADDR      0x08002000
+#define APP_B_ADDR      0x08008000
 
+void trigger_upgrade(void) {
+	// 1. 使能 PWR 和 BKP 时钟
+	RCC->APB1ENR |= RCC_APB1ENR_PWREN | RCC_APB1ENR_BKPEN;
+
+	// 2. 解除后备域写保护
+	PWR->CR |= PWR_CR_DBP;
+
+	// 3. 写标记和目标地址（每个 16 位寄存器只能写 16 位）
+	BKP->DR1 = 0x5555;  // 升级请求标记
+	BKP->DR2 = (uint16_t)(APP_B_ADDR >> 16);  // 目标地址高16位
+	BKP->DR3 = (uint16_t)(APP_B_ADDR);        // 目标地址低16位
+
+	// 4. 复位
+	NVIC_SystemReset();
+}
+
+sem_t upgrade_sem;
+
+  // 替换你现有的 Upgrade_Task
+void Upgrade_Task(void *param)
+{
+	while (1) {
+		sem_take(&upgrade_sem);         // ← 阻塞，等 Start_Task give
+
+		// 被唤醒了：检查是不是 "UPGRADE"
+		if (Usart_MatchCmd((uint8_t *)"UPGRADE", 7)) {
+			Usart_ClearSize();                       // 清缓冲区，准备收下一帧
+			trigger_upgrade();      // ← 写 BKP → NVIC_SystemReset
+		}
+		
+	}
+}
 
 void Start_Task(void *param)
 {
@@ -300,10 +340,21 @@ void Start_Task(void *param)
                 TimerDaemon_Task_Stack_Size,
                 TimerDaemon_Task_PRIORITY,
                 TimerDaemon_Task_PREEMPT_PRIORITY);	
+    task_create(&Upgrade_Task_Handler,
+				Upgrade_Task,               
+				NULL,
+				Upgrade_Task_Stack, 
+				Upgrade_Task_Stack_Size,
+				Upgrade_Task_PRIORITY,
+				Upgrade_Task_PREEMPT_PRIORITY);
     
     exit_critical(bp);
     while(1){
-		
+		// Start_Task while(1)：
+		if (Usart_IsDataReady()) {
+			sem_give(&upgrade_sem);
+			Usart_ClearFlag();
+		}
 	}
 }
 

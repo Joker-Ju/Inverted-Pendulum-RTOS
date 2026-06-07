@@ -273,8 +273,8 @@
               </OCR_RVCT3>
               <OCR_RVCT4>
                 <Type>1</Type>
-                <StartAddress>0x8000000</StartAddress>
-                <Size>0x10000</Size>
+                <StartAddress>0x8008000</StartAddress>
+                <Size>0x6000</Size>
               </OCR_RVCT4>
               <OCR_RVCT5>
                 <Type>1</Type>
@@ -849,6 +849,16 @@
               <FileName>timers.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\RTOS\timers.h</FilePath>
+            </File>
+            <File>
+              <FileName>semaphore.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\RTOS\semaphore.c</FilePath>
+            </File>
+            <File>
+              <FileName>semaphore.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\RTOS\semaphore.h</FilePath>
             </File>
           </Files>
         </Group>
