@@ -258,8 +258,8 @@ void trigger_upgrade(void) {
 
 	// 3. 写标记和目标地址（每个 16 位寄存器只能写 16 位）
 	BKP->DR1 = 0x5555;  // 升级请求标记
-	BKP->DR2 = (uint16_t)(APP_B_ADDR >> 16);  // 目标地址高16位
-	BKP->DR3 = (uint16_t)(APP_B_ADDR);        // 目标地址低16位
+	BKP->DR2 = (uint16_t)(APP_A_ADDR >> 16);  // 目标地址高16位
+	BKP->DR3 = (uint16_t)(APP_A_ADDR);        // 目标地址低16位
 
 	// 4. 复位
 	NVIC_SystemReset();
