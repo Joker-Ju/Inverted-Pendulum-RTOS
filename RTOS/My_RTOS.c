@@ -282,6 +282,14 @@ void Upgrade_Task(void *param)
 	}
 }
 
+void confirm_boot(void) {
+	RCC->APB1ENR |= RCC_APB1ENR_PWREN | RCC_APB1ENR_BKPEN;
+	PWR->CR |= PWR_CR_DBP;
+	if (BKP->DR4 != 0x0000) {
+		BKP->DR4 = 0x0000;   // 标记"已确认"
+	}
+}
+
 void Start_Task(void *param)
 {
 	Key_Init();
@@ -302,7 +310,7 @@ void Start_Task(void *param)
 	//timer_queue，timer_queue_buf以及其长度在timers.c和timers.h里面
     queue_create(&timer_queue, timer_queue_buf, sizeof(timer_event_t), 10);
     event_group_init(&ctrl_eg);
-	
+	confirm_boot();    // 确认启动成功
 	uint32_t bp = enter_critical();
 	
 	task_create(&PID_Task_Handler,
