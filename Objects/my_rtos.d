@@ -45,4 +45,9 @@
 .\objects\my_rtos.o: .\Hardware\DMA1.h
 .\objects\my_rtos.o: .\Hardware\Led.h
 .\objects\my_rtos.o: .\Hardware\Encoder.h
+.\objects\my_rtos.o: .\Hardware\ESP8266.h
+.\objects\my_rtos.o: .\Hardware\Usart2.h
+.\objects\my_rtos.o: .\Bootloader\W25Q64.h
+.\objects\my_rtos.o: .\Bootloader\W25Q64_Ins.h
+.\objects\my_rtos.o: .\Bootloader\SPI_Hard.h
 .\objects\my_rtos.o: .\User\PID.h

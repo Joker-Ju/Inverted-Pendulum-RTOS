@@ -336,7 +336,7 @@
               <MiscControls></MiscControls>
               <Define>USE_STDPERIPH_DRIVER</Define>
               <Undefine></Undefine>
-              <IncludePath>.\Start;.\User;.\Library;.\Hardware;.\RTOS</IncludePath>
+              <IncludePath>.\Start;.\User;.\Library;.\Hardware;.\RTOS;.\Bootloader</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -790,6 +790,26 @@
               <FileType>5</FileType>
               <FilePath>.\Hardware\Encoder.h</FilePath>
             </File>
+            <File>
+              <FileName>Usart2.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Hardware\Usart2.c</FilePath>
+            </File>
+            <File>
+              <FileName>Usart2.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Hardware\Usart2.h</FilePath>
+            </File>
+            <File>
+              <FileName>ESP8266.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Hardware\ESP8266.c</FilePath>
+            </File>
+            <File>
+              <FileName>ESP8266.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Hardware\ESP8266.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -859,6 +879,46 @@
               <FileName>semaphore.h</FileName>
               <FileType>5</FileType>
               <FilePath>.\RTOS\semaphore.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Bootloader</GroupName>
+          <Files>
+            <File>
+              <FileName>Flash.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Bootloader\Flash.c</FilePath>
+            </File>
+            <File>
+              <FileName>Flash.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Bootloader\Flash.h</FilePath>
+            </File>
+            <File>
+              <FileName>SPI_Hard.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Bootloader\SPI_Hard.c</FilePath>
+            </File>
+            <File>
+              <FileName>SPI_Hard.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Bootloader\SPI_Hard.h</FilePath>
+            </File>
+            <File>
+              <FileName>W25Q64.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>.\Bootloader\W25Q64.c</FilePath>
+            </File>
+            <File>
+              <FileName>W25Q64.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Bootloader\W25Q64.h</FilePath>
+            </File>
+            <File>
+              <FileName>W25Q64_Ins.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Bootloader\W25Q64_Ins.h</FilePath>
             </File>
           </Files>
         </Group>

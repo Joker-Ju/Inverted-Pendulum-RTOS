@@ -8,6 +8,7 @@
                 "e:\\MyProject_Register\\倒立摆+MyRTOS + 位置控制\\Library",
                 "e:\\MyProject_Register\\倒立摆+MyRTOS + 位置控制\\Hardware",
                 "e:\\MyProject_Register\\倒立摆+MyRTOS + 位置控制\\RTOS",
+                "e:\\MyProject_Register\\倒立摆+MyRTOS + 位置控制\\Bootloader",
                 "E:\\Keil5\\ARM\\ARMCC\\include",
                 "E:\\Keil5\\ARM\\ARMCC\\include\\rw"
             ],

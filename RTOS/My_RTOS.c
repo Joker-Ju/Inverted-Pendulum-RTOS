@@ -14,7 +14,10 @@
 #include "DMA1.h"
 #include "Led.h"
 #include "Encoder.h"
+#include "ESP8266.h"
 
+//#include Bootloader
+#include "W25Q64.h"
 
 //#include Others
 #include "PID.h"
@@ -51,7 +54,7 @@ uint32_t Display_Task_Stack[Display_Task_Stack_Size + TASK_GUARD_SIZE];
 TCB_t  TimerDaemon_Task_Handler;
 uint32_t TimerDaemon_Task_Stack[TimerDaemon_Task_Stack_Size + TASK_GUARD_SIZE];
 
-#define Upgrade_Task_Stack_Size 50
+#define Upgrade_Task_Stack_Size 80
 #define Upgrade_Task_PRIORITY 0
 #define Upgrade_Task_PREEMPT_PRIORITY 4
 TCB_t  Upgrade_Task_Handler;
@@ -249,36 +252,136 @@ void TimerDaemon_Task(void *param)
 #define APP_A_ADDR      0x08002000
 #define APP_B_ADDR      0x08008000
 
-void trigger_upgrade(void) {
+static uint32_t ota_crc = 0xFFFFFFFF;
+
+static void crc32_feed_buf(const uint8_t *data, uint32_t len) {
+	for (uint32_t i = 0; i < len; i++) {
+		ota_crc ^= data[i];
+		for (int j = 0; j < 8; j++) {
+			if (ota_crc & 1)
+				ota_crc = (ota_crc >> 1) ^ 0xEDB88320;
+			else
+				ota_crc >>= 1;
+		}
+	}
+}
+
+
+void trigger_upgrade(uint32_t fw_size){
 	// 1. 使能 PWR 和 BKP 时钟
 	RCC->APB1ENR |= RCC_APB1ENR_PWREN | RCC_APB1ENR_BKPEN;
 
 	// 2. 解除后备域写保护
 	PWR->CR |= PWR_CR_DBP;
 
-	// 3. 写标记和目标地址（每个 16 位寄存器只能写 16 位）
+	// 3. 写标记（每个 16 位寄存器只能写 16 位）
 	BKP->DR1 = 0x5555;  // 升级请求标记
-	BKP->DR2 = (uint16_t)(APP_A_ADDR >> 16);  // 目标地址高16位
-	BKP->DR3 = (uint16_t)(APP_A_ADDR);        // 目标地址低16位
+	BKP->DR2 = fw_size & 0xFFFF;
+	BKP->DR3 = (fw_size >> 16) & 0xFFFF;
 
 	// 4. 复位
 	NVIC_SystemReset();
 }
 
+static uint32_t ota_w25_addr = 0x000000;
+
+static void ota_reset_writer(void) {
+	ota_w25_addr = 0;
+}
+
+static void ota_write_packet(uint8_t *data, uint32_t len) {
+	W25Q64_Write(ota_w25_addr, data, len);
+	ota_w25_addr += len;
+}
+
 sem_t upgrade_sem;
 
-  // 替换你现有的 Upgrade_Task
 void Upgrade_Task(void *param)
 {
-	while (1) {
-		sem_take(&upgrade_sem);         // ← 阻塞，等 Start_Task give
+	static uint8_t pkt[512];
 
-		// 被唤醒了：检查是不是 "UPGRADE"
-		if (Usart_MatchCmd((uint8_t *)"UPGRADE", 7)) {
-			Usart_ClearSize();                       // 清缓冲区，准备收下一帧
-			trigger_upgrade();      // ← 写 BKP → NVIC_SystemReset
+	while (1) {
+		sem_take(&upgrade_sem);         // 阻塞，等 Start_Task give
+
+		printf("=== OTA START ===\r\n");
+		W25Q64_Init();
+		// Upgrade_Task 里，W25Q64_Init() 后面加：
+		printf("Erasing W25Q64...\r\n");
+		for (uint32_t sector = 0; sector < 12; sector++) {  // 12×4KB=48KB
+			W25Q64_SectorErase(sector * 4096);
+		}
+		printf("Erase done\r\n");
+		//测试代码，确认 W25Q64 能正常读写
+		// uint8_t id = W25Q64_ReadID();           
+		// printf("W25Q64 ID = 0x%02X\r\n", id);  
+			
+		// ── 确认 ESP8266 在线 ──
+		if (!ESP8266_IsAlive()) {
+			printf("ESP8266 offline!\r\n");
+			continue;
+		}
+		printf("ESP8266 OK\r\n");
+
+		// Upgrade_Task 里，ESP8266_IsAlive() 通过后：
+		if (ESP8266_ConnectAP("oppofindx5", "88888888") != ESP8266_OK) {
+			printf("WiFi FAIL\r\n");
+			continue;
+		}
+		if (ESP8266_TCPConnect("192.168.229.202", 8080) != ESP8266_OK) {
+			printf("TCP FAIL\r\n");
+			continue;
 		}
 		
+		// ── 初始化 W25Q64 ──
+		ota_reset_writer();
+		ota_crc = 0xFFFFFFFF;
+
+
+
+		// ── 收固件数据 → 直接写 W25Q64 ──
+		ESP8266_ClearSize(); // 清除残留状态，准备接收新固件
+		uint32_t received = 0;
+		uint32_t idle_timeout_cnt = 0;       // ← 连续超时计数
+		while (1) {
+			uint32_t len = sizeof(pkt);
+			uint8_t ret = ESP8266_RecvData(pkt, &len, 5000);
+			if (ret == ESP8266_OK) {
+				ota_write_packet(pkt, len);
+				crc32_feed_buf(pkt, len);
+				received += len;
+				printf(".");
+			} else if (ret == ESP8266_CLOSED) {
+				printf("\r\nTCP CLOSED\r\n");
+				break;
+			} else if (ret == ESP8266_TIMEOUT) {
+				idle_timeout_cnt++;
+				if (idle_timeout_cnt >= 3) {
+					printf("\r\nRecv TIMEOUT!\r\n");
+					break;
+				}
+				continue;  // 超时了就再等，不要急着退出
+			} else {
+				printf("\r\nRecv FAIL!\r\n");
+				break;
+			}
+		}
+
+		// ── 收完 ──
+		if (received == ESP8266_GetTotalSize()) {
+			printf("\r\nComplete! %d bytes\r\n", received);
+			ota_crc ^= 0xFFFFFFFF;                            // 最终异或
+			printf("OTA CRC final = 0x%08X\r\n", ota_crc);
+			W25Q64_Write(received, (uint8_t*)&ota_crc, 4);    // CRC 写在固件后面
+			uint32_t crc_check = 0xFFFFFFFF;
+			W25Q64_Read(received, (uint8_t*)&crc_check, 4);
+			printf("CRC footer = 0x%08X\r\n", crc_check);
+			ota_crc = 0xFFFFFFFF;                              // 复位，供下次用
+			trigger_upgrade(received);
+		} 
+		else {
+			printf("Fail received data!\r\n");
+			ESP8266_ClearSize();  // 清除残留状态
+		}
 	}
 }
 
@@ -310,7 +413,15 @@ void Start_Task(void *param)
 	//timer_queue，timer_queue_buf以及其长度在timers.c和timers.h里面
     queue_create(&timer_queue, timer_queue_buf, sizeof(timer_event_t), 10);
     event_group_init(&ctrl_eg);
+	
+	if (ESP8266_Init() != ESP8266_OK) {
+		printf("ESP8266 init FAIL!\r\n");
+	}
+	
 	confirm_boot();    // 确认启动成功
+	
+	
+	
 	uint32_t bp = enter_critical();
 	
 	task_create(&PID_Task_Handler,
@@ -360,8 +471,11 @@ void Start_Task(void *param)
     while(1){
 		// Start_Task while(1)：
 		if (Usart_IsDataReady()) {
-			sem_give(&upgrade_sem);
-			Usart_ClearFlag();
+			if (Usart_MatchCmd((uint8_t *)"OTA", 3)) {
+				sem_give(&upgrade_sem);      // ← 这里可能被抢断
+			}
+			Usart_ClearFlag();               // ← 但回来后会从这里继续执行
+			Usart_ClearSize();
 		}
 	}
 }
