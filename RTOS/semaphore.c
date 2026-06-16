@@ -93,10 +93,10 @@ void mutex_lock(mutex_t *mutex)
         scheduler_add(mutex->holder); // 将持有者重新加入就绪队列
     }
     current_tcb->state = TASK_BLOCKED; // 将当前任务状态设置为 BLOCKED
-    current_tcb->next = mutex->wait_list_head; // 将当前任务加入等待链表头部
-    mutex->wait_list_head = current_tcb; // 更新等待链表头指针
+    pend_to_list_by_preempt(&mutex->wait_list_head, current_tcb); // 将当前任务按优先级插入等待链表
     exit_critical(pm);
     trigger_switch(); // 触发 PendSV 进行任务切换
+    return; // 阻塞等待锁，等到被唤醒后直接返回
 }
 
 void mutex_unlock(mutex_t *mutex)
@@ -118,13 +118,24 @@ void mutex_unlock(mutex_t *mutex)
     mutex->holder->preempt_priority = mutex->holder_prio; // 恢复持有者的原始优先级 
     if (mutex->wait_list_head != NULL) // 如果有任务在等待
     {
-        TCB_t *to_ready = mutex->wait_list_head; // 获取等待链表头部的任务
-        mutex->wait_list_head = to_ready->next; // 更新等待链表头指针
-        to_ready->state = TASK_READY; // 将该任务状态设置为 READY
-        scheduler_add(to_ready); // 将该任务加入就绪队列
+        TCB_t *new_holder = mutex->wait_list_head; // 获取等待链表头部的任务
+        mutex->wait_list_head = new_holder->next; // 更新等待链表头指针
+        new_holder->state = TASK_READY; // 将该任务状态设置为 READY
+
+        // 新持有者直接拿到锁
+        mutex->holder = new_holder;
+        mutex->lock_count = 1;
+        mutex->holder_prio = new_holder->preempt_priority;
+        // 注意：holder_prio 存的是新持有者的原始优先级（它没被提升过）
+
+
+        scheduler_add(new_holder); // 将该任务加入就绪队列
 
     }
-    mutex->holder = NULL; // 释放锁，清空持有者信息
+    else
+    {
+        mutex->holder = NULL; // 释放锁，清空持有者信息
+    }
     exit_critical(pm);
 }
 

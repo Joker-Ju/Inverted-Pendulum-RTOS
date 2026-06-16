@@ -54,7 +54,7 @@ uint32_t Display_Task_Stack[Display_Task_Stack_Size + TASK_GUARD_SIZE];
 TCB_t  TimerDaemon_Task_Handler;
 uint32_t TimerDaemon_Task_Stack[TimerDaemon_Task_Stack_Size + TASK_GUARD_SIZE];
 
-#define Upgrade_Task_Stack_Size 80
+#define Upgrade_Task_Stack_Size 100
 #define Upgrade_Task_PRIORITY 0
 #define Upgrade_Task_PREEMPT_PRIORITY 4
 TCB_t  Upgrade_Task_Handler;

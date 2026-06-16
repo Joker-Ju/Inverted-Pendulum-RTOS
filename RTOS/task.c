@@ -234,6 +234,14 @@ void pend_to_list(TCB_t **head, TCB_t *task)
   task->next = *head;
   *head = task;
 }
+
+void pend_to_list_by_preempt(TCB_t **head, TCB_t *task)
+{
+    while (*head != NULL && (*head)->preempt_priority >= task->preempt_priority)
+        head = &(*head)->next;
+    task->next = *head;
+    *head = task;
+}
 //
 
 
