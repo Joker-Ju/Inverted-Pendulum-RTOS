@@ -339,48 +339,59 @@ void Upgrade_Task(void *param)
 
 
 		// ── 收固件数据 → 直接写 W25Q64 ──
-		ESP8266_ClearSize(); // 清除残留状态，准备接收新固件
-		uint32_t received = 0;
-		uint32_t idle_timeout_cnt = 0;       // ← 连续超时计数
+		uint32_t total_received = 0;
 		while (1) {
-			uint32_t len = sizeof(pkt);
-			uint8_t ret = ESP8266_RecvData(pkt, &len, 5000);
-			if (ret == ESP8266_OK) {
-				ota_write_packet(pkt, len);
-				crc32_feed_buf(pkt, len);
-				received += len;
-				printf(".");
-			} else if (ret == ESP8266_CLOSED) {
+			// ① 等 +IPD,<len> — ESP8266 说缓存里有 len 字节等你读
+			uint32_t total_len = ESP8266_WaitData(10000);
+			
+			if (total_len == 0xFFFFFFFF) {
 				printf("\r\nTCP CLOSED\r\n");
 				break;
-			} else if (ret == ESP8266_TIMEOUT) {
-				idle_timeout_cnt++;
-				if (idle_timeout_cnt >= 3) {
-					printf("\r\nRecv TIMEOUT!\r\n");
+			}
+			
+			if (total_len == 0) {
+				// ESP8266_WaitData里自己算超时时间
+				continue;
+			}
+
+
+			printf("\r\n[%d bytes in buffer]\r\n", total_len);
+
+
+
+			// ② 把缓存里的数据分段读完（每段 512 字节写一次 Flash）
+			while (total_len > 0) {
+				uint32_t read_len = (total_len > sizeof(pkt)) ? sizeof(pkt) : total_len;
+				uint32_t got = ESP8266_ReadData(pkt, read_len);
+
+				if (got == 0) {
+					printf("ReadData FAIL!\r\n");
 					break;
 				}
-				continue;  // 超时了就再等，不要急着退出
-			} else {
-				printf("\r\nRecv FAIL!\r\n");
-				break;
+
+				// ③ 写 W25Q64（这 3ms 绝对安全！数据已经在 pkt 里了）
+				ota_write_packet(pkt, got);
+				crc32_feed_buf(pkt, got);
+				total_received += got;
+
+				total_len -= got;
+				printf(".");
 			}
 		}
 
-		// ── 收完 ──
-		if (received == ESP8266_GetTotalSize()) {
-			printf("\r\nComplete! %d bytes\r\n", received);
-			ota_crc ^= 0xFFFFFFFF;                            // 最终异或
+		if (total_received > 0) {
+			printf("\r\nComplete! %d bytes\r\n", total_received);
+			ota_crc ^= 0xFFFFFFFF;
 			printf("OTA CRC final = 0x%08X\r\n", ota_crc);
-			W25Q64_Write(received, (uint8_t*)&ota_crc, 4);    // CRC 写在固件后面
+			W25Q64_Write(total_received, (uint8_t*)&ota_crc, 4);
 			uint32_t crc_check = 0xFFFFFFFF;
-			W25Q64_Read(received, (uint8_t*)&crc_check, 4);
+			W25Q64_Read(total_received, (uint8_t*)&crc_check, 4);
 			printf("CRC footer = 0x%08X\r\n", crc_check);
-			ota_crc = 0xFFFFFFFF;                              // 复位，供下次用
-			trigger_upgrade(received);
-		} 
+			ota_crc = 0xFFFFFFFF;
+			trigger_upgrade(total_received);
+		}
 		else {
 			printf("Fail received data!\r\n");
-			ESP8266_ClearSize();  // 清除残留状态
 		}
 	}
 }
@@ -418,7 +429,7 @@ void Start_Task(void *param)
 		printf("ESP8266 init FAIL!\r\n");
 	}
 	
-	confirm_boot();    // 确认启动成功
+	// confirm_boot();    // 确认启动成功
 	
 	
 	

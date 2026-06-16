@@ -39,7 +39,7 @@ uint8_t Usart2_RecvByte(uint8_t *byte, uint32_t timeout_us) {
             *byte = USART2->DR;        // ← 通过指针传回
             return 1;                  // ← 返回 1 表示成功
         }
-        for (volatile uint32_t i = 0; i < 72; i++);
+        for (volatile uint32_t i = 0; i < 6; i++);
     }
     return 0;                          // ← 返回 0 表示超时
 }
@@ -52,6 +52,6 @@ void Usart2_Flush(void) {
             (void)USART2->DR;   // 读走扔掉
             t = 50000;          // 还有数据，继续等
         }
-        for (volatile uint32_t i = 0; i < 72; i++);
+        for (volatile uint32_t i = 0; i < 6; i++);
     }
 }

@@ -66,6 +66,7 @@ uint8_t ESP8266_Init(void) {
 
     at_cmd("AT+CWMODE=1", "OK", 2000);
     at_cmd("ATE0", "OK", 1000);
+    at_cmd("AT+CIPRECVMODE=1", "OK", 1000);  // ← 加这行
     return ESP8266_OK;
 }
 
@@ -101,18 +102,7 @@ uint8_t ESP8266_TCPConnect(const char *ip, uint16_t port) {
     return wait_response("CONNECT", 10000);  // TCP 连接成功回 CONNECT
 }
 
-// ── ESP8266_RecvData：解析 +IPD,<len>:<data> ──
-//
-// 收到的数据格式（ESP8266 固件自动加的）：
-//   +IPD,512:[512bytes binary data...]
-//    ↑     ↑   ↑
-//    1     2   3
-//
-// 步骤：
-//   1. 等 '+'
-//   2. 确认 "IPD,"
-//   3. 读数字直到 ':'
-//   4. 读指定长度的二进制数据
+
 
 static uint8_t wait_ipd_or_closed(uint32_t timeout_ms) {
     const char closed_word[] = "CLOSED";
@@ -138,70 +128,145 @@ static uint8_t wait_ipd_or_closed(uint32_t timeout_ms) {
 
     return ESP8266_TIMEOUT;
 }
-// ── +IPD 分包状态 ──
-static uint32_t total_ipd_size = 0;   // 这次 +IPD 的总大小
-static uint32_t ipd_remaining = 0;  // 还剩多少字节没收完
-static uint8_t  ipd_closed_pending = 0;
 
-uint8_t ESP8266_RecvData(uint8_t *buf, uint32_t *len, uint32_t timeout_ms) {
+
+// ══════════════════════════════════════════════════════
+//  被动模式：等 +IPD,<len>（不带数据，只通知长度）
+//  返回缓存中的字节数，0=超时/CLOSED
+// ══════════════════════════════════════════════════════
+static uint32_t check_buffered_len(void) {
     uint8_t c;
-    // 如果上次检测到 CLOSED，这次再报出来
-    if (ipd_closed_pending) {
-        ipd_closed_pending = 0;
-        return ESP8266_CLOSED;
+
+    Usart2_Flush();
+    Usart2_SendStr("AT+CIPRECVLEN?\r\n");
+
+    // 等 '+'
+    for (uint32_t t = 10000; t; t--) {
+        if (!Usart2_RecvByte(&c, 50)) continue;
+        if (c == '+') break;
+        if (t == 1) return 0;  // 超时
     }
-    if (ipd_remaining == 0) {
-        uint8_t wait_result = wait_ipd_or_closed(timeout_ms);
-        // 如果检测到 CLOSED，先延迟、返回 TIMEOUT（让 caller 先退出）
-        if (wait_result == ESP8266_CLOSED) {
-            ipd_closed_pending = 1;
-            return ESP8266_TIMEOUT;
+
+    // 确认 "CIPRECVLEN:"
+    const char *hdr = "CIPRECVLEN:";
+    while (*hdr) {
+        if (!Usart2_RecvByte(&c, 5000) || c != *hdr) return 0;
+        hdr++;
+    }
+
+    // 读第一个数字（link 0 的缓存量）
+    uint32_t val = 0;
+    while (1) {
+        if (!Usart2_RecvByte(&c, 5000)) return 0;
+        if (c >= '0' && c <= '9')
+            val = val * 10 + (c - '0');
+        else
+            break;  // 遇到逗号或 \r 都停下
+    }
+    return val;
+}
+
+
+uint32_t ESP8266_WaitData(uint32_t timeout_ms) {
+    static uint8_t closed_already = 0;    // ← 记住上次已经 CLOSED 了
+    static uint32_t idle_cnt = 0;         // 连续超时次数
+    if (closed_already) {
+        closed_already = 0;
+        idle_cnt = 0;
+        return 0xFFFFFFFF;                // ← 直接结束
+    }
+    uint8_t ret = wait_ipd_or_closed(timeout_ms);
+    if (ret == ESP8266_CLOSED) {
+        uint32_t remaining = check_buffered_len();
+        if (remaining > 0) {
+            // 把残留数据当正常 +IPD 返回
+            return remaining;
         }
-        if (wait_result != ESP8266_OK)
-            return wait_result;
-
-    // ═══ 第 2 步：确认 "IPD," ═══
-        // 预期的 4 个字符：I P D ,
-        if (!Usart2_RecvByte(&c, 5000) ||  c != 'I') return ESP8266_FAIL;
-        if (!Usart2_RecvByte(&c, 5000) ||  c != 'P') return ESP8266_FAIL;
-        if (!Usart2_RecvByte(&c, 5000) ||  c != 'D') return ESP8266_FAIL;
-        if (!Usart2_RecvByte(&c, 5000) ||  c != ',') return ESP8266_FAIL;
-
-    // ═══ 第 3 步：读数字直到 ':' ═══
-        // 比如 "+IPD,512:" → 连续读 '5','1','2',':'
-        // 转换成整数：0→5→51→512
-        uint32_t data_len = 0;
-        while (1) {
-            if (!Usart2_RecvByte(&c, 5000))
-                return ESP8266_FAIL;
-            if (c == ':') break;              // 冒号表示长度结束
-            if (c < '0' || c > '9') return ESP8266_FAIL;  // 非数字，异常
-            data_len = data_len * 10 + (c - '0');
+        closed_already = 1;
+        return 0xFFFFFFFF;
+    }
+    if (ret != ESP8266_OK){
+        if (++idle_cnt >= 3) {             // 连续 3 次超时 → 结束
+            idle_cnt = 0;
+            return 0xFFFFFFFF;
         }
-        total_ipd_size += data_len; // 记录总大小，GetTotalSize 就能查
-        ipd_remaining = data_len;  // 剩余字节数增加，等会收 data_len 字节数据
+        return 0;
     }
-// ═══ 第 4 步：收 data_len 字节数据 ═══
-    // 从 ipd_remaining 里取最多 *len 字节给 caller
-    uint32_t want = *len;
-    uint32_t chunk_len = (ipd_remaining < want) ? ipd_remaining : want;
-    *len = chunk_len;                      // 通过指针告诉调用者实际长度
+    // 确认 "IPD,"
+    uint8_t c;
+    if (!Usart2_RecvByte(&c, 5000) || c != 'I') return 0;
+    if (!Usart2_RecvByte(&c, 5000) || c != 'P') return 0;
+    if (!Usart2_RecvByte(&c, 5000) || c != 'D') return 0;
+    if (!Usart2_RecvByte(&c, 5000) || c != ',') return 0;
 
-    for (uint32_t i = 0; i < chunk_len; i++) {
-        if (!Usart2_RecvByte(&buf[i], 5000)) // 每字节留足 UART 间隔
-            return ESP8266_FAIL;
+    // ── 读数字直到遇到 ',' 或 '\r' ──
+    // +IPD,<len>          ← 单连接
+    // +IPD,<linkID>,<len> ← 多连接
+    // 两种情况都处理：读到 ',' 说明还在读 linkID，继续
+    //                  读到 \r 说明这就是 len
+    uint32_t val = 0;
+    while (1) {
+        if (!Usart2_RecvByte(&c, 5000)) return 0;
+        if (c == '\r' || c == '\n') break;   // 数字结束
+        if (c >= '0' && c <= '9') {
+            val = val * 10 + (c - '0');
+        } else if (c == ',') {
+            // 遇到逗号，说明刚读完的是 linkID，不是 len
+            // 重置 val，读真正 len
+            val = 0;
+        } else {
+            return 0;  // 异常字符
+        }
     }
-    ipd_remaining -= chunk_len;
-    return ESP8266_OK;
+
+    return val;
+}
+// ══════════════════════════════════════════════════════
+//  被动模式：发 AT+CIPRECVDATA=<len>，读数据
+//  返回实际读到的字节数，0=失败
+// ══════════════════════════════════════════════════════
+uint32_t ESP8266_ReadData(uint8_t *buf, uint32_t len) {
+    uint8_t c;
+
+    // ── 发 AT+CIPRECVDATA=<len> ──
+
+    Usart2_SendStr("AT+CIPRECVDATA=");
+    char num[12];
+    int i = 0;
+    uint32_t n = len;
+    do { num[i++] = '0' + (n % 10); n /= 10; } while (n);
+    while (i--) Usart2_SendByte(num[i]);
+    Usart2_SendStr("\r\n");
+
+    // ── 等 "+CIPRECVDATA,<len>:" ──
+    uint32_t timeout = 20000;  // ~1s
+    while (timeout--) {
+        if (!Usart2_RecvByte(&c, 50)) continue;
+        if (c == '+') break;
+    }
+    if (timeout == 0) return 0;
+
+    const char *hdr1 = "CIPRECVDATA,";
+    while (*hdr1) {
+        if (!Usart2_RecvByte(&c, 5000) || c != *hdr1) return 0;
+        hdr1++;
+    }
+    // 跳过数字（长度）
+    while (1) {
+        if (!Usart2_RecvByte(&c, 5000)) return 0;
+        if (c == ':') break;
+    }
+
+    // ── 读 len 字节数据 ──
+    uint32_t read_len = len;
+    for (uint32_t i = 0; i < read_len; i++) {
+        if (!Usart2_RecvByte(&buf[i], 5000)) {
+            read_len = i;
+            break;
+        }
+    }
+    return read_len;
 }
 
-uint32_t ESP8266_GetTotalSize(void)
-{
-    return total_ipd_size;
-}
 
-void ESP8266_ClearSize(void)
-{
-    total_ipd_size = 0;
-    ipd_remaining = 0;
-}
+

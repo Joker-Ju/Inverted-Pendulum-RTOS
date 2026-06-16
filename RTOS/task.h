@@ -71,6 +71,7 @@ uint32_t task_notify_wait(void);
 
 //辅助函数
 void pend_to_list(TCB_t **head, TCB_t *task);
+void pend_to_list_by_preempt(TCB_t **head, TCB_t *task);
 TCB_t *wake_one(TCB_t **head);
 int need_preempt(TCB_t *task);
 
