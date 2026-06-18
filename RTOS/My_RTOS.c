@@ -249,8 +249,7 @@ void TimerDaemon_Task(void *param)
     }
 }
 
-#define APP_A_ADDR      0x08002000
-#define APP_B_ADDR      0x08008000
+
 
 static uint32_t ota_crc = 0xFFFFFFFF;
 
@@ -285,15 +284,6 @@ void trigger_upgrade(uint32_t fw_size){
 
 static uint32_t ota_w25_addr = 0x000000;
 
-static void ota_reset_writer(void) {
-	ota_w25_addr = 0;
-}
-
-static void ota_write_packet(uint8_t *data, uint32_t len) {
-	W25Q64_Write(ota_w25_addr, data, len);
-	ota_w25_addr += len;
-}
-
 
 static uint32_t drain_esp8266_buf(uint8_t *pkt, uint32_t pkt_size, uint32_t remain) {
 	uint32_t total = 0;
@@ -301,7 +291,8 @@ static uint32_t drain_esp8266_buf(uint8_t *pkt, uint32_t pkt_size, uint32_t rema
 		uint32_t read_len = (remain > pkt_size) ? pkt_size : remain;
 		uint32_t got = ESP8266_ReadData(pkt, read_len);
 		if (got == 0) return total;           // 读失败，返回已写入的
-		ota_write_packet(pkt, got);
+		W25Q64_Write(ota_w25_addr, pkt, got);
+		ota_w25_addr += got;
 		total += got;
 		remain -= got;
 		printf(".");
@@ -349,10 +340,7 @@ void Upgrade_Task(void *param)
 		}
 		
 		// ── 初始化 W25Q64 ──
-		ota_reset_writer();
-		ota_crc = 0xFFFFFFFF;
-
-
+		ota_w25_addr = 0;
 
 		// ── 收固件数据 → 直接写 W25Q64 ──
 		uint32_t total_received = 0;
@@ -377,11 +365,14 @@ void Upgrade_Task(void *param)
 					continue;
 
 			}
-			printf("\r\n[%d bytes in buffer]\r\n", total_len);
+			//打开可看更具体
+			// printf("\r\n[%d bytes in buffer]\r\n", total_len);
 
 			// ② 把缓存里的数据分段读完（每段 512 字节写一次 Flash）
 			uint32_t got = drain_esp8266_buf(pkt, sizeof(pkt), total_len);
+			if (got == 0) break;    // ← 快速退出，让 CRC 判
 			total_received += got;
+			idle_cnt = 0;  // 收到数据了，重置空闲计数
 			
 			
 		}
@@ -389,7 +380,7 @@ void Upgrade_Task(void *param)
 		uint32_t fw_size = total_received - 4;          // 固件实际大小（不含 CRC footer）
 		ota_crc = 0xFFFFFFFF;
 		for (uint32_t pos = 0; pos < fw_size; pos += 256) {
-			uint32_t chunk = (pos + 256 > total_received - 4) ? (total_received - 4 - pos) : 256;
+			uint32_t chunk = (pos + 256 > fw_size) ? (fw_size - pos) : 256;
 			W25Q64_Read(pos, pkt, chunk);
 			crc32_feed_buf(pkt, chunk);
 		}
