@@ -134,7 +134,7 @@ static uint8_t wait_ipd_or_closed(uint32_t timeout_ms) {
 //  被动模式：等 +IPD,<len>（不带数据，只通知长度）
 //  返回缓存中的字节数，0=超时/CLOSED
 // ══════════════════════════════════════════════════════
-static uint32_t check_buffered_len(void) {
+static uint32_t ESP8266_CheckBufferedLen(void) {
     uint8_t c;
 
     Usart2_Flush();
@@ -166,30 +166,25 @@ static uint32_t check_buffered_len(void) {
     return val;
 }
 
+static uint8_t g_closed_already = 0;   // ← 全局变量
 
 uint32_t ESP8266_WaitData(uint32_t timeout_ms) {
-    static uint8_t closed_already = 0;    // ← 记住上次已经 CLOSED 了
-    static uint32_t idle_cnt = 0;         // 连续超时次数
-    if (closed_already) {
-        closed_already = 0;
-        idle_cnt = 0;
+
+    if (g_closed_already) {
+        g_closed_already = 0;
         return 0xFFFFFFFF;                // ← 直接结束
     }
     uint8_t ret = wait_ipd_or_closed(timeout_ms);
     if (ret == ESP8266_CLOSED) {
-        uint32_t remaining = check_buffered_len();
+        g_closed_already = 1;  // 下次再来就直接返回 CLOSED，不用等了
+        uint32_t remaining = ESP8266_CheckBufferedLen();
         if (remaining > 0) {
             // 把残留数据当正常 +IPD 返回
             return remaining;
         }
-        closed_already = 1;
         return 0xFFFFFFFF;
     }
     if (ret != ESP8266_OK){
-        if (++idle_cnt >= 3) {             // 连续 3 次超时 → 结束
-            idle_cnt = 0;
-            return 0xFFFFFFFF;
-        }
         return 0;
     }
     // 确认 "IPD,"
@@ -269,4 +264,20 @@ uint32_t ESP8266_ReadData(uint8_t *buf, uint32_t len) {
 }
 
 
+void ESP8266_CloseConnection(void) {
+	Usart2_Flush();
+	Usart2_SendStr("AT+CIPCLOSE\r\n");
+	wait_response("CLOSED", 5000);
+}
+
+// 检查 TCP 是否还连着，返回 1=已连接，0=已断开
+uint8_t ESP8266_IsTCPConnected(void) {
+    Usart2_Flush();
+    Usart2_SendStr("AT+CIPSTATUS\r\n");
+    return wait_response("STATUS:2", 5000) == ESP8266_OK;
+}
+
+void ESP8266_ResetClosedFlag(void) {
+    g_closed_already = 0;
+}
 

@@ -266,7 +266,7 @@ static void crc32_feed_buf(const uint8_t *data, uint32_t len) {
 	}
 }
 
-
+//升级任务里使用的一些函数
 void trigger_upgrade(uint32_t fw_size){
 	// 1. 使能 PWR 和 BKP 时钟
 	RCC->APB1ENR |= RCC_APB1ENR_PWREN | RCC_APB1ENR_BKPEN;
@@ -294,14 +294,30 @@ static void ota_write_packet(uint8_t *data, uint32_t len) {
 	ota_w25_addr += len;
 }
 
+
+static uint32_t drain_esp8266_buf(uint8_t *pkt, uint32_t pkt_size, uint32_t remain) {
+	uint32_t total = 0;
+	while (remain > 0) {
+		uint32_t read_len = (remain > pkt_size) ? pkt_size : remain;
+		uint32_t got = ESP8266_ReadData(pkt, read_len);
+		if (got == 0) return total;           // 读失败，返回已写入的
+		ota_write_packet(pkt, got);
+		total += got;
+		remain -= got;
+		printf(".");
+	}
+	return total;
+}
+
+
 sem_t upgrade_sem;
 
 void Upgrade_Task(void *param)
 {
 	static uint8_t pkt[512];
-
 	while (1) {
 		sem_take(&upgrade_sem);         // 阻塞，等 Start_Task give
+		ESP8266_ResetClosedFlag();  // 重置全局标记，避免上次残留的 CLOSED 影响本次 OTA
 
 		printf("=== OTA START ===\r\n");
 		W25Q64_Init();
@@ -312,8 +328,8 @@ void Upgrade_Task(void *param)
 		}
 		printf("Erase done\r\n");
 		//测试代码，确认 W25Q64 能正常读写
-		// uint8_t id = W25Q64_ReadID();           
-		// printf("W25Q64 ID = 0x%02X\r\n", id);  
+		uint8_t id = W25Q64_ReadID();           
+		printf("W25Q64 ID = 0x%02X\r\n", id);  
 			
 		// ── 确认 ESP8266 在线 ──
 		if (!ESP8266_IsAlive()) {
@@ -327,7 +343,7 @@ void Upgrade_Task(void *param)
 			printf("WiFi FAIL\r\n");
 			continue;
 		}
-		if (ESP8266_TCPConnect("192.168.229.202", 8080) != ESP8266_OK) {
+		if (ESP8266_TCPConnect("10.8.164.186", 8080) != ESP8266_OK) {
 			printf("TCP FAIL\r\n");
 			continue;
 		}
@@ -340,6 +356,9 @@ void Upgrade_Task(void *param)
 
 		// ── 收固件数据 → 直接写 W25Q64 ──
 		uint32_t total_received = 0;
+		uint32_t idle_cnt = 0;
+
+
 		while (1) {
 			// ① 等 +IPD,<len> — ESP8266 说缓存里有 len 字节等你读
 			uint32_t total_len = ESP8266_WaitData(10000);
@@ -350,49 +369,41 @@ void Upgrade_Task(void *param)
 			}
 			
 			if (total_len == 0) {
-				// ESP8266_WaitData里自己算超时时间
-				continue;
+					if (++idle_cnt >= 2) {
+						printf("\r\nOTA idle timeout!\r\n");
+						ESP8266_CloseConnection();
+						break;
+					}
+					continue;
+
 			}
-
-
 			printf("\r\n[%d bytes in buffer]\r\n", total_len);
 
-
-
 			// ② 把缓存里的数据分段读完（每段 512 字节写一次 Flash）
-			while (total_len > 0) {
-				uint32_t read_len = (total_len > sizeof(pkt)) ? sizeof(pkt) : total_len;
-				uint32_t got = ESP8266_ReadData(pkt, read_len);
-
-				if (got == 0) {
-					printf("ReadData FAIL!\r\n");
-					break;
-				}
-
-				// ③ 写 W25Q64（这 3ms 绝对安全！数据已经在 pkt 里了）
-				ota_write_packet(pkt, got);
-				crc32_feed_buf(pkt, got);
-				total_received += got;
-
-				total_len -= got;
-				printf(".");
-			}
+			uint32_t got = drain_esp8266_buf(pkt, sizeof(pkt), total_len);
+			total_received += got;
+			
+			
+		}
+		printf("CRC32 calculating...\r\n");
+		uint32_t fw_size = total_received - 4;          // 固件实际大小（不含 CRC footer）
+		ota_crc = 0xFFFFFFFF;
+		for (uint32_t pos = 0; pos < fw_size; pos += 256) {
+			uint32_t chunk = (pos + 256 > total_received - 4) ? (total_received - 4 - pos) : 256;
+			W25Q64_Read(pos, pkt, chunk);
+			crc32_feed_buf(pkt, chunk);
+		}
+		ota_crc ^= 0xFFFFFFFF;   // ← 完成 CRC32 校验
+		uint32_t server_crc;
+		W25Q64_Read(fw_size, (uint8_t*)&server_crc, 4);
+		
+		if (ota_crc == server_crc) {
+			printf("CRC OK! firmware = %d bytes\r\n", fw_size);
+			trigger_upgrade(fw_size);                   // 传固件大小（不含 CRC）
+		} else {
+			printf("CRC FAILED! 0x%08X vs 0x%08X\r\n", ota_crc, server_crc);
 		}
 
-		if (total_received > 0) {
-			printf("\r\nComplete! %d bytes\r\n", total_received);
-			ota_crc ^= 0xFFFFFFFF;
-			printf("OTA CRC final = 0x%08X\r\n", ota_crc);
-			W25Q64_Write(total_received, (uint8_t*)&ota_crc, 4);
-			uint32_t crc_check = 0xFFFFFFFF;
-			W25Q64_Read(total_received, (uint8_t*)&crc_check, 4);
-			printf("CRC footer = 0x%08X\r\n", crc_check);
-			ota_crc = 0xFFFFFFFF;
-			trigger_upgrade(total_received);
-		}
-		else {
-			printf("Fail received data!\r\n");
-		}
 	}
 }
 
