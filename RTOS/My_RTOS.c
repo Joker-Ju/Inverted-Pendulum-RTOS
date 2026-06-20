@@ -334,7 +334,7 @@ void Upgrade_Task(void *param)
 			printf("WiFi FAIL\r\n");
 			continue;
 		}
-		if (ESP8266_TCPConnect("10.8.164.186", 8080) != ESP8266_OK) {
+		if (ESP8266_TCPConnect("10.8.49.246", 8080) != ESP8266_OK) {
 			printf("TCP FAIL\r\n");
 			continue;
 		}
@@ -431,7 +431,7 @@ void Start_Task(void *param)
 		printf("ESP8266 init FAIL!\r\n");
 	}
 	
-	// confirm_boot();    // 确认启动成功
+	confirm_boot();    // 确认启动成功
 	
 	
 	

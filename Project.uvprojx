@@ -367,7 +367,7 @@
             <TextAddressRange>0x08000000</TextAddressRange>
             <DataAddressRange>0x20000000</DataAddressRange>
             <pXoBase></pXoBase>
-            <ScatterFile></ScatterFile>
+            <ScatterFile>.\Objects\Project.sct</ScatterFile>
             <IncludeLibs></IncludeLibs>
             <IncludeLibsPath></IncludeLibsPath>
             <Misc></Misc>
@@ -380,11 +380,6 @@
         <Group>
           <GroupName>Start</GroupName>
           <Files>
-            <File>
-              <FileName>startup_stm32f10x_md.s</FileName>
-              <FileType>2</FileType>
-              <FilePath>.\Start\startup_stm32f10x_md.s</FilePath>
-            </File>
             <File>
               <FileName>core_cm3.c</FileName>
               <FileType>1</FileType>
@@ -401,14 +396,19 @@
               <FilePath>.\Start\stm32f10x.h</FilePath>
             </File>
             <File>
+              <FileName>system_stm32f10x.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>.\Start\system_stm32f10x.h</FilePath>
+            </File>
+            <File>
               <FileName>system_stm32f10x.c</FileName>
               <FileType>1</FileType>
               <FilePath>.\Start\system_stm32f10x.c</FilePath>
             </File>
             <File>
-              <FileName>system_stm32f10x.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>.\Start\system_stm32f10x.h</FilePath>
+              <FileName>startup_stm32f10x_md.s</FileName>
+              <FileType>2</FileType>
+              <FilePath>.\Start\startup_stm32f10x_md.s</FilePath>
             </File>
           </Files>
         </Group>

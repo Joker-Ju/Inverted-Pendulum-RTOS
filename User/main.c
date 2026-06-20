@@ -4,9 +4,6 @@
 int main(void)
 {
 
-
-	extern uint32_t __Vectors[];
-	SCB->VTOR = (uint32_t)__Vectors;
 	// ── 调试：看看 App 跑起来了没 ──
 	RCC->APB2ENR |= RCC_APB2ENR_IOPCEN;
 	GPIOC->CRH &= ~(0xF << 20);
