@@ -43,7 +43,7 @@ uint32_t ADC_Task_Stack[ADC_Task_Stack_Size + TASK_GUARD_SIZE];
 
 #define Display_Task_Stack_Size 50
 #define Display_Task_PRIORITY 0
-#define Display_Task_PREEMPT_PRIORITY 2
+#define Display_Task_PREEMPT_PRIORITY 0
 TCB_t  Display_Task_Handler;
 uint32_t Display_Task_Stack[Display_Task_Stack_Size + TASK_GUARD_SIZE];
 
@@ -87,14 +87,51 @@ PID_TypeDef AnglePID = {
 	.Alpha = 0.5,
 };
 
+// // ========== DWT 循环计数器定义 ==========
+// #define DEMCR       (*(volatile uint32_t *)0xE000EDFC)
+// #define DEMCR_TRCENA (1UL << 24)
+
+// #define DWT_CTRL    (*(volatile uint32_t *)0xE0001000)
+// #define DWT_CYCCNT  (*(volatile uint32_t *)0xE0001004)
+// #define DWT_CTRL_CYCCNTENA (1UL << 0)
+
+// // ========== 测频采样数组 ==========
+// #define SAMPLE_COUNT 100
+// static volatile uint32_t cycle_samples[SAMPLE_COUNT];
+// static int sample_idx = -1;  // -1 表示跳过第一次
+// static int measure_active = 1;  // 开始记录，设为 0 则停止采
+
+// // ========== DWT 初始化（在 main 开头调一次） ==========
+// static void DWT_Init(void) {
+// 	DEMCR |= DEMCR_TRCENA;
+// 	DWT_CYCCNT = 0;
+// 	DWT_CTRL |= DWT_CTRL_CYCCNTENA;
+// }
 
 void PID_Task(void *param)
-{
+{ 
+	// DWT_Init();
+	// static uint32_t last_cycle = 0;
     while (1) {
 		// 等 ADC 采完 + 按键允许
 		event_group_wait(&ctrl_eg, BIT_RUN | BIT_KEY_EN | BIT_ADC_EN, WAIT_MODE_AND);//阻塞1
 		event_group_clear(&ctrl_eg, BIT_ADC_EN);
 	
+		// ========== 测周期（放在 event_group 同步之后、PID_Update 之前） ==========
+		// if (measure_active) {
+		// 	uint32_t now = DWT_CYCCNT;
+		// 	if (sample_idx >= 0) {
+		// 		cycle_samples[sample_idx] = now - last_cycle;
+		// 		sample_idx++;
+		// 		if (sample_idx >= SAMPLE_COUNT) {
+		// 			measure_active = 0;  // 采满 100 个就停
+		// 		}
+		// 	} else {
+		// 		sample_idx = 0;  // 第一次进来，记个基准但不存
+		// 	}
+		// 	last_cycle = now;
+		// }
+		// ========== PID 更新 ==========
 		PID_Update(&AnglePID);
 		// 如果按键状态改变了，直接停止，进入下一轮
 		if ((ctrl_eg.flags & (BIT_RUN | BIT_KEY_EN)) != (BIT_RUN | BIT_KEY_EN)) {
